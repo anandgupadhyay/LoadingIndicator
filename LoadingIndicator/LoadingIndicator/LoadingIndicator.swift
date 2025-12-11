@@ -1,249 +1,174 @@
-//
-//  LoadingIndicator.swift
-//  Demo
-//
-//  Created by Anand Upadhyay on 09/12/25.
-//
-
 import SwiftUI
 
-struct SlidingImagesLoader: View {
-    let images: [String]          // image asset names
-    let imageSize: CGSize
-    let speed: Double            // seconds for one full slide
-
-    @State private var offset: CGFloat = 0
-
-    var body: some View {
-        GeometryReader { geo in
-            let width = geo.size.width
-
-            HStack(spacing: 16) {
-                // First sequence
-                ForEach(images.indices, id: \.self) { index in
-                    Image(images[index])
-                        .resizable()
-                        .scaledToFit()
-                        .frame(width: imageSize.width, height: imageSize.height)
-                }
-
-                // Second sequence for seamless loop
-                ForEach(images.indices, id: \.self) { index in
-                    Image(images[index])
-                        .resizable()
-                        .scaledToFit()
-                        .frame(width: imageSize.width, height: imageSize.height)
-                }
-            }
-            .frame(width: width * 2, alignment: .leading)
-            .offset(x: offset)
-            .onAppear {
-                // Start from the right
-                offset = 0
-                withAnimation(
-                    .easeInOut(duration: speed)
-                        .repeatForever(autoreverses: false)
-                ) {
-                    // Move full width to the left continuously
-                    offset = -width
-                }
-            }
-            .clipped()
-        }
-        .frame(height: imageSize.height)
-    }
+enum AnimDirection {
+    case leftToRight
+    case rightToLeft
 }
 
+struct AnimatedImageLoader: View {
 
-struct HorizontalImagesLoader: View {
-    let images: [String]
-    let imageSize: CGFloat
-    let spacing: CGFloat
-    let speed: Double          // seconds for one full travel
-
-    @State private var phase: Double = 0  // 0...1
-
-    var body: some View {
-        TimelineView(.animation) { timeline in
-            // drive phase based on time
-            let t = timeline.date.timeIntervalSinceReferenceDate
-            // normalize 0...1
-            let localPhase = (t.truncatingRemainder(dividingBy: speed)) / speed
-
-            HStack(spacing: spacing) {
-                ForEach(images.indices, id: \.self) { index in
-                    let offsetFraction = Double(index) / Double(images.count)
-                    // shift each image so they are staggered
-                    let progress = (localPhase + offsetFraction)
-                        .truncatingRemainder(dividingBy: 1)
-
-                    // 1 -> 0 (right to left)
-                    let x = 1.0 - progress
-
-                    Image(images[index])
-                        .resizable()
-                        .scaledToFit()
-                        .frame(width: imageSize, height: imageSize)
-                        .opacity(easeInOut(progress))              // ease opacity if you want
-                        .offset(x: CGFloat((x - 0.5) * 200))       // 200 = travel width
-                }
-            }
-        }
-        .frame(height: imageSize)
-    }
-
-    // simple easeInOut curve for opacity or any other parameter
-    private func easeInOut(_ t: Double) -> Double {
-        // cosine-based smoothstep
-        return 0.5 - 0.5 * cos(t * .pi)
-    }
-}
-
-struct SlidingImageLoader: View {
-    let imageName: String
-    let height: CGFloat
-    let backgroundOpacity: Double
-    let duration: Double   // seconds for one leftward pass
-    let cornerRadius: CGFloat
-
-    @State private var animate = false
-
-    public init(imageName: String = "paperplane.fill",
-                height: CGFloat = 48,
-                backgroundOpacity: Double = 0.12,
-                duration: Double = 1.6,
-                cornerRadius: CGFloat = 12)
-    {
-        self.imageName = imageName
-        self.height = height
-        self.backgroundOpacity = backgroundOpacity
-        self.duration = duration
-        self.cornerRadius = cornerRadius
-    }
-
-    var body: some View {
-        GeometryReader { geo in
-            let totalWidth = geo.size.width
-            // We'll move the image from off the right edge to off the left edge
-            let travel = totalWidth + height // enough to clear both edges (image ~ height)
-
-            ZStack {
-                // rounded rectangle with transparent light gray background
-                RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
-                    .fill(Color.gray.opacity(backgroundOpacity))
-                    .frame(height: height)
-                    .overlay(
-                        RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
-                            .stroke(Color.gray.opacity(backgroundOpacity * 1.5), lineWidth: 0) // subtle border if wanted
-                    )
-
-                // moving image
-                Image(systemName: imageName)
-                    .resizable()
-                    .scaledToFit()
-                    .frame(height: height * 0.6) // image size relative to container
-                    .offset(x: animate ? -travel/2 : travel/2) // animate from right -> left
-                    // center vertically inside the rectangle
-                    .animation(
-                        .linear(duration: duration)
-                            .repeatForever(autoreverses: false),
-                        value: animate
-                    )
-                    .accessibilityHidden(true)
-            }
-            .frame(height: height)
-            // Keep a bit of padding so the image visibly travels inside the rounded rect
-            .onAppear {
-                // tiny delay so layout finishes before animation starts (avoids jump)
-                DispatchQueue.main.async {
-                    animate = true
-                }
-            }
-        }
-        .frame(height: height)
-        // Optional subtle shadow
-        .shadow(color: Color.black.opacity(0.04), radius: 4, x: 0, y: 2)
-    }
-}
-
-
-// MARK: - Reusable Animated Variant View
-struct VariantAnimator: View {
+    // MARK: - Properties
     let imageNames: [String]
     let size: CGFloat
+    let animationDuration: Double
+    let pauseDuration: Double
+    let cornerRadius: CGFloat
+    let backgroundColor: Color
+    let imagePadding: CGFloat
+    @Binding var animationDirection: AnimDirection
+
+    // ⭐ New Flag — Controls Start/Stop
+    @Binding var isAnimating: Bool
+
     @State private var currentIndex: Int = 0
     @State private var animateOffset: CGFloat = 0
+    @State private var isLoopActive: Bool = false   // internal flag to stop loops
 
+    // MARK: - Init
+    init(
+        imageNames: [String] = [
+            "Variant10", "Variant11", "Variant12", "Variant13",
+            "Variant14", "Variant15", "Variant16", "Variant17", "Variant18"
+        ],
+        size: CGFloat = 100,
+        animationDuration: Double = 0.4,
+        pauseDuration: Double = 0.3,
+        cornerRadius: CGFloat = 10,
+        backgroundColor: Color = Color.gray.opacity(0.2),
+        imagePadding: CGFloat = 0,
+        direction: Binding<AnimDirection> = .constant(.rightToLeft),
+        isAnimating: Binding<Bool> = .constant(true)
+    ) {
+        self.imageNames = imageNames
+        self.size = size
+        self.animationDuration = animationDuration
+        self.pauseDuration = pauseDuration
+        self.cornerRadius = cornerRadius
+        self.backgroundColor = backgroundColor
+        self.imagePadding = imagePadding
+        self._animationDirection = direction
+        self._isAnimating = isAnimating
+    }
+
+    // MARK: - UI
     var body: some View {
         ZStack {
-            RoundedRectangle(cornerRadius: 10)
-                .fill(Color.gray.opacity(0.2))
+            RoundedRectangle(cornerRadius: cornerRadius)
+                .fill(backgroundColor)
                 .frame(width: size, height: size)
                 .overlay(
                     GeometryReader { geo in
                         let width = geo.size.width
                         HStack(spacing: 0) {
-                            ForEach(imageNames.indices, id: \.self) { index in
-                                Image(imageNames[index])
+                            ForEach(imageNames.indices, id: \.self) { i in
+                                Image(imageNames[i])
                                     .resizable()
                                     .scaledToFit()
-                                    .frame(width: width, height: width)
+                                    .frame(
+                                        width: width - imagePadding * 2,
+                                        height: width - imagePadding * 2
+                                    )
+                                    .padding(imagePadding)
                             }
                         }
                         .offset(x: animateOffset)
-                        .onAppear {
-                            startAnimation(width: width)
+                        .onChange(of: isAnimating) { _, newValue in
+                            if newValue {
+                                startAnimation(width: width)
+                            } else {
+                                stopAnimation()
+                            }
+                        }
+                        .onAppear{
+                            if isAnimating{ startAnimation(width: width) }
                         }
                     }
+                    .clipped()
                 )
+                .clipShape(RoundedRectangle(cornerRadius: cornerRadius))
         }
     }
 
+    // MARK: - Animation Control
     private func startAnimation(width: CGFloat) {
-        let totalWidth = width * CGFloat(imageNames.count)
-        animateOffset = 0
+        guard !isLoopActive else { return }
+        isLoopActive = true
+        animateNext(width: width)
+    }
 
-        withAnimation(Animation.easeInOut(duration: 1.5).repeatForever(autoreverses: false)) {
-            animateOffset = -totalWidth + width
+    private func stopAnimation() {
+        isLoopActive = false
+    }
+
+    private func animateNext(width: CGFloat) {
+        guard isLoopActive else { return }
+
+        withAnimation(.easeInOut(duration: animationDuration)) {
+            switch animationDirection {
+            case .leftToRight:
+                currentIndex -= 1
+                animateOffset = -width * CGFloat(currentIndex)
+            case .rightToLeft:
+                currentIndex += 1
+                animateOffset = -width * CGFloat(currentIndex)
+            }
+        }
+
+        DispatchQueue.main.asyncAfter(deadline: .now() + animationDuration + pauseDuration) {
+
+            guard isLoopActive else { return }
+
+            switch animationDirection {
+            case .leftToRight:
+                if currentIndex <= 0 {
+                    currentIndex = imageNames.count - 1
+                    animateOffset = -width * CGFloat(currentIndex)
+                }
+            case .rightToLeft:
+                if currentIndex >= imageNames.count {
+                    currentIndex = 0
+                    animateOffset = 0
+                }
+            }
+
+            animateNext(width: width)
+        }
+    }
+}
+
+struct TestLoaderView: View {
+    
+    @State private var loading = true
+    @State private var direction :AnimDirection = .rightToLeft
+    var body: some View {
+        VStack(spacing: 30) {
+
+            AnimatedImageLoader(direction: $direction, isAnimating: $loading)
+
+            Button(loading ? "Stop" : "Start") {
+                loading.toggle()
+            }
+            .padding()
+            Button(direction == .rightToLeft ? "Left To Right" : "Right To Left") {
+                if direction == .leftToRight {
+                    direction = .rightToLeft
+                }else{
+                    direction = .leftToRight
+                }
+            }
         }
     }
 }
 
 
-
-// MARK: - Extension for Universal Use
-extension View {
-    func variantAnimatorSquare(size: CGFloat = 50) -> some View {
-        VariantAnimator(imageNames: ["Variant10", "Variant11", "Variant12", "Variant13","Variant14","Variant15","Variant16","Variant17","Variant18"], size: size)
-    }
-}
 
 // MARK: - Preview
-struct VariantAnimator_Previews: PreviewProvider {
-    static var previews: some View {
-        VariantAnimator(imageNames: ["Variant10", "Variant11", "Variant12", "Variant13","Variant14","Variant15","Variant16","Variant17","Variant18"], size: 50)
-            .previewLayout(.sizeThatFits)
-            .padding()
-    }
-}
-
-
-struct LoadingContentView: View {
-    var body: some View {
-        
-        SlidingImageLoader(imageName: "Variant10",
-height: 56,backgroundOpacity: 0.10,duration: 1.2)
-.padding(.horizontal)
-        
-        
-//        SlidingImageLoader(
-//            images: ["Variant10", "Variant11", "Variant12", "Variant13","Variant14","Variant15","Variant16","Variant17","Variant18"],
-//            imageSize: CGSize(width: 40, height: 40),
-//            speed: 1.0  // adjust for faster/slower
-//        )
-    }
-}
-
 #Preview {
-    LoadingContentView()
+    TestLoaderView()
+//    VStack(spacing: 30) {
+//        AnimatedImageLoader()
+//        AnimatedImageLoader(size: 80)
+//        VariantImageLoader(directino: .leftToRight)
+//    }
+//    .padding()
 }

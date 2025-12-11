@@ -11,7 +11,7 @@ import SwiftUI
 struct LoadingIndicatorApp: App {
     var body: some Scene {
         WindowGroup {
-            LoadingContentView()
+            TestLoaderView()
         }
     }
 }
